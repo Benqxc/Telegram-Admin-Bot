@@ -751,63 +751,63 @@ async def ticket_stats(interaction: discord.Interaction):
         for ticket_id, ticket in guild_tickets.items():
             if ticket['status'] == 'open':
                 channel = interaction.guild.get_channel(int(ticket['channel_id']))
-                if channel:
-                    status = '✋' if ticket['claimed_by'] else '🟢'
-                    open_list.append(f"{status} {channel.mention} - <@{ticket['user_id']}>")
+импорт раднгогласиеиф канал:
+ статус = '✋' если билет['заявлено_от'] еще '🟢'
+ открытый_список.добавить(ф"{статус} {канал.упомянуть} - <@{билет['идентификатор_пользователя']}>")
         
-        if open_list:
-            embed.add_field(
-                name='Открытые тикеты',
-                value='\n'.join(open_list[:10]),
-                inline=False
+        если открытый_список:
+ вставлять.добавить_поле(
+ имя='Открытые тикеты',
+ значение='\н'.присоединиться(открытый_список[:10]),
+ встроенный=Ложь
             )
     
-    await interaction.response.send_message(embed=embed)
+    ждать взаимодействие.ответ.отправить_сообщение(встраивать=встраивать)
 
 
-@bot.tree.command(name="ticket_close_all", description="Закрыть все открытые тикеты (только для администраторов)")
-async def ticket_close_all(interaction: discord.Interaction):
+@bot.tree.команда(имя="ticket_close_all", описание="Закрыть все открытые тикеты (только для администраторов)")
+асинхронный деф билет_закрыть_все(взаимодействие: раздор.Взаимодействие):
     """Закрывает все открытые тикеты на сервере"""
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message('❌ Эта команда доступна только администраторам.', ephemeral=True)
-        return
+    если нет взаимодействие.пользователь.guild_разрешения.администратор:
+        ждать взаимодействие.ответ.отправить_сообщение('❌ Эта команда доступна только администраторам.', эфемерный=Истинный)
+        возвращаться
     
-    tickets = load_tickets()
-    guild_id = str(interaction.guild.id)
+ билеты = load_tickets()
+ guild_id = стр(взаимодействие.гильдия.идентификатор)
     
-    if guild_id not in tickets:
-        await interaction.response.send_message('❌ На этом сервере нет тикетов.', ephemeral=True)
-        return
+    если идентификатор_гильдии нет в билеты:
+        ждать взаимодействие.ответ.отправить_сообщение('❌ На этом сервере нет тикетов.', эфемерный=Истинный)
+        возвращаться
     
-    await interaction.response.defer(ephemeral=True)
+    ждать взаимодействие.ответ.отложить(эфемерный=Истинный)
     
-    closed_count = 0
-    for ticket_id, ticket in tickets[guild_id].items():
-        if ticket['status'] == 'open':
-            channel = interaction.guild.get_channel(int(ticket['channel_id']))
-            if channel:
-                try:
-                    await channel.delete(reason='Массовое закрытие тикетов администратором')
-                    ticket['status'] = 'closed'
-                    ticket['closed_by'] = interaction.user.id
-                    ticket['closed_at'] = datetime.datetime.now().isoformat()
-                    ticket['close_reason'] = 'Массовое закрытие администратором'
-                    closed_count += 1
-                except:
-                    pass
+ закрытое_количество = 0
+    для ticket_id, билет в билеты[идентификатор_гильдии].предметы():
+        если билет['статус'] == 'открыть':
+ канал = взаимодействие.гильдия.получить_канал(инт(билет['идентификатор_канала']))
+            если канал:
+                пытаться:
+                    ждать канал.удалить(причина='Массовое закрытие тикетов администратором')
+ билет['статус'] = «закрыто»
+ билет['закрыто_по'] = взаимодействие.пользователь.идентификатор
+ билет['закрыто_в'] = дата и время.дата и время.сейчас().изоформат()
+ билет['закрыть_причину'] = 'Массовое закрытие администратором'
+ закрытое_количество += 1
+                кроме:
+                    проходить
     
-    save_tickets(tickets)
+    сохранить_билеты(билеты)
     
-    await interaction.followup.send(f'✅ Закрыто тикетов: {closed_count}', ephemeral=True)
+    ждать взаимодействие.следовать за.отправлять(f'✅ ЗакрытѾ тикѵтѾв: {закрытое_количество}', эфемерный=Истинный)
 
 
 # ==================== Запуск бота ====================
 
-if __name__ == '__main__':
-    if TOKEN is None:
-        print('❌ Ошибка: токен не найден. Укажите DISCORD_TOKEN в переменных окружения или файле .env')
-    else:
-        try:
-            bot.run(TOKEN)
-        except Exception as e:
-            print(f'❌ Ошибка запуска бота: {e}')
+если __имя__ == '__основной__':
+    если ТОКЕН является Нет:
+        печать('❌ Ошибка: токен не найден. Укажите DISCORD_TOKEN в переменных окружениях или файле .env')
+    еще:
+        пытаться:
+ бот.бегать(ТОКЕН)
+        кроме Исключение как е:
+            печать(f'❌ Ошибка запуска боЂа: {e}')
