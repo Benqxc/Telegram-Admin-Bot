@@ -1,6 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord.ui import Button, View, Modal, TextInput
 import os
 import json
 import datetime
@@ -12,6 +13,8 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 BAD_WORDS = ['мат1', 'мат2', 'плохое_слово']
 WARNINGS_FILE = 'warnings.json'
 AUTO_ROLES_FILE = 'auto_roles.json'
+TICKETS_FILE = 'tickets.json'
+TICKET_CONFIG_FILE = 'ticket_config.json'
 
 # Настройка intents
 intents = discord.Intents.default()
@@ -53,6 +56,252 @@ def save_auto_roles(roles):
         json.dump(roles, f, ensure_ascii=False, indent=4)
 
 
+def load_tickets():
+    """Загружает данные о тикетах"""
+    if os.path.exists(TICKETS_FILE):
+        with open(TICKETS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+
+def save_tickets(tickets):
+    """Сохраняет данные о тикетах"""
+    with open(TICKETS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(tickets, f, ensure_ascii=False, indent=4)
+
+
+def load_ticket_config():
+    """Загружает конфигурацию тикетов"""
+    if os.path.exists(TICKET_CONFIG_FILE):
+        with open(TICKET_CONFIG_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+
+def save_ticket_config(config):
+    """Сохраняет конфигурацию тикетов"""
+    with open(TICKET_CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False, indent=4)
+
+
+# ==================== Система тикетов ====================
+
+class TicketCreateButton(Button):
+    """Кнопка для создания тикета"""
+    def __init__(self):
+        super().__init__(
+            label="Открыть тикет",
+            style=discord.ButtonStyle.green,
+            emoji="🎫"
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        tickets = load_tickets()
+        guild_id = str(interaction.guild.id)
+        user_id = str(interaction.user.id)
+        
+        # Проверка на существующий открытый тикет
+        if guild_id in tickets:
+            for ticket_id, ticket_data in tickets[guild_id].items():
+                if ticket_data['user_id'] == user_id and ticket_data['status'] == 'open':
+                    channel = interaction.guild.get_channel(int(ticket_data['channel_id']))
+                    if channel:
+                        await interaction.response.send_message(
+                            f'❌ У вас уже есть открытый тикет: {channel.mention}',
+                            ephemeral=True
+                        )
+                        return
+        
+        # Получение конфигурации
+        config = load_ticket_config()
+        guild_config = config.get(guild_id, {})
+        category_id = guild_config.get('category_id')
+        support_role_id = guild_config.get('support_role_id')
+        
+        category = None
+        if category_id:
+            category = interaction.guild.get_channel(int(category_id))
+        
+        # Создание канала тикета
+        overwrites = {
+            interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            interaction.guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        }
+        
+        if support_role_id:
+            support_role = interaction.guild.get_role(int(support_role_id))
+            if support_role:
+                overwrites[support_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        
+        try:
+            ticket_number = len(tickets.get(guild_id, {})) + 1
+            channel = await interaction.guild.create_text_channel(
+                name=f'тикет-{ticket_number:04d}',
+                category=category,
+                overwrites=overwrites
+            )
+            
+            # Сохранение данных тикета
+            if guild_id not in tickets:
+                tickets[guild_id] = {}
+            
+            ticket_id = str(channel.id)
+            tickets[guild_id][ticket_id] = {
+                'channel_id': channel.id,
+                'user_id': user_id,
+                'user_name': str(interaction.user),
+                'created_at': datetime.datetime.now().isoformat(),
+                'status': 'open',
+                'claimed_by': None,
+                'claimed_at': None,
+                'closed_by': None,
+                'closed_at': None,
+                'close_reason': None,
+                'number': ticket_number
+            }
+            save_tickets(tickets)
+            
+            # Создание embed для тикета
+            embed = discord.Embed(
+                title=f'🎫 Тикет #{ticket_number:04d}',
+                description=f'Добро пожаловать, {interaction.user.mention}!\n\nОпишите вашу проблему, и наша команда поддержки скоро вам поможет.',
+                color=discord.Color.blue()
+            )
+            embed.add_field(name='Статус', value='🟢 Открыт', inline=True)
+            embed.add_field(name='Создан', value=f'<t:{int(datetime.datetime.now().timestamp())}:R>', inline=True)
+            embed.set_footer(text='Powered by Nobame')
+            
+            # Создание кнопок управления тикетом
+            view = TicketControlView()
+            await channel.send(embed=embed, view=view)
+            
+            await interaction.response.send_message(
+                f'✅ Тикет создан: {channel.mention}',
+                ephemeral=True
+            )
+            
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                '❌ У бота нет прав для создания каналов.',
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(
+                f'❌ Ошибка при создании тикета: {e}',
+                ephemeral=True
+            )
+
+
+class TicketPanelView(View):
+    """View для панели тикетов"""
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketCreateButton())
+
+
+class TicketControlView(View):
+    """View для управления тикетом"""
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @discord.ui.button(label="Принять", style=discord.ButtonStyle.primary, emoji="✋")
+    async def claim_button(self, interaction: discord.Interaction, button: Button):
+        tickets = load_tickets()
+        guild_id = str(interaction.guild.id)
+        channel_id = str(interaction.channel.id)
+        
+        if guild_id not in tickets or channel_id not in tickets[guild_id]:
+            await interaction.response.send_message('❌ Тикет не найден.', ephemeral=True)
+            return
+        
+        ticket = tickets[guild_id][channel_id]
+        
+        if ticket['claimed_by']:
+            await interaction.response.send_message(
+                f'❌ Тикет уже принят пользователем <@{ticket["claimed_by"]}>',
+                ephemeral=True
+            )
+            return
+        
+        # Принятие тикета
+        ticket['claimed_by'] = interaction.user.id
+        ticket['claimed_at'] = datetime.datetime.now().isoformat()
+        save_tickets(tickets)
+        
+        embed = discord.Embed(
+            title='✋ Тикет принят',
+            description=f'{interaction.user.mention} принял этот тикет и скоро поможет вам.',
+            color=discord.Color.green()
+        )
+        await interaction.channel.send(embed=embed)
+        await interaction.response.send_message('✅ Вы приняли этот тикет.', ephemeral=True)
+    
+    @discord.ui.button(label="Закрыть", style=discord.ButtonStyle.danger, emoji="🔒")
+    async def close_button(self, interaction: discord.Interaction, button: Button):
+        modal = CloseTicketModal()
+        await interaction.response.send_modal(modal)
+
+
+class CloseTicketModal(Modal, title='Закрытие тикета'):
+    """Модальное окно для закрытия тикета"""
+    reason = TextInput(
+        label='Причина закрытия',
+        placeholder='Укажите причину закрытия тикета...',
+        required=True,
+        max_length=500
+    )
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        tickets = load_tickets()
+        guild_id = str(interaction.guild.id)
+        channel_id = str(interaction.channel.id)
+        
+        if guild_id not in tickets or channel_id not in tickets[guild_id]:
+            await interaction.response.send_message('❌ Тикет не найден.', ephemeral=True)
+            return
+        
+        ticket = tickets[guild_id][channel_id]
+        
+        # Закрытие тикета
+        ticket['status'] = 'closed'
+        ticket['closed_by'] = interaction.user.id
+        ticket['closed_at'] = datetime.datetime.now().isoformat()
+        ticket['close_reason'] = self.reason.value
+        save_tickets(tickets)
+        
+        # Создание лога
+        embed = discord.Embed(
+            title='🔒 Тикет закрыт',
+            color=discord.Color.red()
+        )
+        embed.add_field(name='Закрыл', value=interaction.user.mention, inline=True)
+        embed.add_field(name='Причина', value=self.reason.value, inline=False)
+        
+        if ticket['claimed_by']:
+            embed.add_field(name='Принял', value=f"<@{ticket['claimed_by']}>", inline=True)
+        
+        embed.add_field(name='Создатель', value=f"<@{ticket['user_id']}>", inline=True)
+        embed.add_field(
+            name='Время работы',
+            value=f"<t:{int(datetime.datetime.fromisoformat(ticket['created_at']).timestamp())}:R>",
+            inline=True
+        )
+        embed.set_footer(text='Канал будет удален через 10 секунд')
+        
+        await interaction.response.send_message(embed=embed)
+        
+        # Удаление канала через 10 секунд
+        await interaction.channel.send('⏱️ Канал будет удален через 10 секунд...')
+        import asyncio
+        await asyncio.sleep(10)
+        
+        try:
+            await interaction.channel.delete()
+        except:
+            pass
+
+
 # ==================== События ====================
 
 @bot.event
@@ -60,6 +309,11 @@ async def on_ready():
     """Событие при запуске бота"""
     print(f'✅ Бот {bot.user} успешно подключился к Discord!')
     print(f'📊 Подключен к {len(bot.guilds)} серверам')
+    
+    # Регистрация persistent views для тикетов
+    bot.add_view(TicketPanelView())
+    bot.add_view(TicketControlView())
+    print('✅ Persistent views для тикетов зарегистрированы')
     
     try:
         synced = await bot.tree.sync()
@@ -356,6 +610,195 @@ async def autorole_list(interaction: discord.Interaction):
     )
     
     await interaction.response.send_message(embed=embed)
+
+
+# ==================== Команды тикетов ====================
+
+@bot.tree.command(name="setup_tickets", description="Создать панель тикетов в канале")
+@app_commands.describe(
+    channel="Канал для размещения панели тикетов",
+    category="Категория для создания тикет-каналов (необязательно)",
+    support_role="Роль поддержки с доступом к тикетам (необязательно)"
+)
+async def setup_tickets(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    category: discord.CategoryChannel = None,
+    support_role: discord.Role = None
+):
+    """Создает панель тикетов в указанном канале"""
+    if not interaction.user.guild_permissions.manage_channels:
+        await interaction.response.send_message('❌ У вас нет прав на управление каналами.', ephemeral=True)
+        return
+    
+    # Сохранение конфигурации
+    config = load_ticket_config()
+    guild_id = str(interaction.guild.id)
+    
+    if guild_id not in config:
+        config[guild_id] = {}
+    
+    if category:
+        config[guild_id]['category_id'] = category.id
+    
+    if support_role:
+        config[guild_id]['support_role_id'] = support_role.id
+    
+    save_ticket_config(config)
+    
+    # Создание embed для панели
+    embed = discord.Embed(
+        title='🎫 Tickets v2',
+        description='**Откройте билет!**\nНажав на кнопку, вы откроете билет.',
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text='Powered by Nobame')
+    
+    # Отправка панели с кнопкой
+    try:
+        view = TicketPanelView()
+        await channel.send(embed=embed, view=view)
+        
+        response_text = f'✅ Панель тикетов создана в {channel.mention}'
+        if category:
+            response_text += f'\n📁 Категория: {category.mention}'
+        if support_role:
+            response_text += f'\n👥 Роль поддержки: {support_role.mention}'
+        
+        await interaction.response.send_message(response_text, ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            f'❌ У бота нет прав для отправки сообщений в {channel.mention}',
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="ticket_config", description="Настроить систему тикетов")
+@app_commands.describe(
+    category="Категория для создания тикет-каналов",
+    support_role="Роль поддержки с доступом к тикетам"
+)
+async def ticket_config(
+    interaction: discord.Interaction,
+    category: discord.CategoryChannel = None,
+    support_role: discord.Role = None
+):
+    """Настраивает параметры системы тикетов"""
+    if not interaction.user.guild_permissions.manage_channels:
+        await interaction.response.send_message('❌ У вас нет прав на управление каналами.', ephemeral=True)
+        return
+    
+    config = load_ticket_config()
+    guild_id = str(interaction.guild.id)
+    
+    if guild_id not in config:
+        config[guild_id] = {}
+    
+    changes = []
+    
+    if category:
+        config[guild_id]['category_id'] = category.id
+        changes.append(f'📁 Категория: {category.mention}')
+    
+    if support_role:
+        config[guild_id]['support_role_id'] = support_role.id
+        changes.append(f'👥 Роль поддержки: {support_role.mention}')
+    
+    if not changes:
+        await interaction.response.send_message('❌ Укажите хотя бы один параметр для настройки.', ephemeral=True)
+        return
+    
+    save_ticket_config(config)
+    
+    embed = discord.Embed(
+        title='⚙️ Конфигурация тикетов обновлена',
+        description='\n'.join(changes),
+        color=discord.Color.green()
+    )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="ticket_stats", description="Показать статистику тикетов")
+async def ticket_stats(interaction: discord.Interaction):
+    """Показывает статистику по тикетам сервера"""
+    tickets = load_tickets()
+    guild_id = str(interaction.guild.id)
+    
+    if guild_id not in tickets or not tickets[guild_id]:
+        await interaction.response.send_message('📊 На этом сервере еще не было создано тикетов.', ephemeral=True)
+        return
+    
+    guild_tickets = tickets[guild_id]
+    
+    total = len(guild_tickets)
+    open_tickets = sum(1 for t in guild_tickets.values() if t['status'] == 'open')
+    closed_tickets = sum(1 for t in guild_tickets.values() if t['status'] == 'closed')
+    claimed_tickets = sum(1 for t in guild_tickets.values() if t['claimed_by'] is not None)
+    
+    embed = discord.Embed(
+        title='📊 Статистика тикетов',
+        color=discord.Color.blue()
+    )
+    embed.add_field(name='Всего тикетов', value=str(total), inline=True)
+    embed.add_field(name='🟢 Открыто', value=str(open_tickets), inline=True)
+    embed.add_field(name='🔒 Закрыто', value=str(closed_tickets), inline=True)
+    embed.add_field(name='✋ Принято', value=str(claimed_tickets), inline=True)
+    
+    # Список открытых тикетов
+    if open_tickets > 0:
+        open_list = []
+        for ticket_id, ticket in guild_tickets.items():
+            if ticket['status'] == 'open':
+                channel = interaction.guild.get_channel(int(ticket['channel_id']))
+                if channel:
+                    status = '✋' if ticket['claimed_by'] else '🟢'
+                    open_list.append(f"{status} {channel.mention} - <@{ticket['user_id']}>")
+        
+        if open_list:
+            embed.add_field(
+                name='Открытые тикеты',
+                value='\n'.join(open_list[:10]),
+                inline=False
+            )
+    
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="ticket_close_all", description="Закрыть все открытые тикеты (только для администраторов)")
+async def ticket_close_all(interaction: discord.Interaction):
+    """Закрывает все открытые тикеты на сервере"""
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message('❌ Эта команда доступна только администраторам.', ephemeral=True)
+        return
+    
+    tickets = load_tickets()
+    guild_id = str(interaction.guild.id)
+    
+    if guild_id not in tickets:
+        await interaction.response.send_message('❌ На этом сервере нет тикетов.', ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    closed_count = 0
+    for ticket_id, ticket in tickets[guild_id].items():
+        if ticket['status'] == 'open':
+            channel = interaction.guild.get_channel(int(ticket['channel_id']))
+            if channel:
+                try:
+                    await channel.delete(reason='Массовое закрытие тикетов администратором')
+                    ticket['status'] = 'closed'
+                    ticket['closed_by'] = interaction.user.id
+                    ticket['closed_at'] = datetime.datetime.now().isoformat()
+                    ticket['close_reason'] = 'Массовое закрытие администратором'
+                    closed_count += 1
+                except:
+                    pass
+    
+    save_tickets(tickets)
+    
+    await interaction.followup.send(f'✅ Закрыто тикетов: {closed_count}', ephemeral=True)
 
 
 # ==================== Запуск бота ====================
