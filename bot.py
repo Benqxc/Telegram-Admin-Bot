@@ -751,7 +751,7 @@ async def ticket_stats(interaction: discord.Interaction):
         for ticket_id, ticket in guild_tickets.items():
             if ticket['status'] == 'open':
                 channel = interaction.guild.get_channel(int(ticket['channel_id']))
-импорт раднгогласиеиф канал:
+канал импортиф:
  статус = '✋' если билет['заявлено_от'] еще '🟢'
  открытый_список.добавить(ф"{статус} {канал.упомянуть} - <@{билет['идентификатор_пользователя']}>")
         
