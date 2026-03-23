@@ -92,7 +92,8 @@ class TicketCreateButton(Button):
         super().__init__(
             label="Открыть тикет",
             style=discord.ButtonStyle.green,
-            emoji="🎫"
+            emoji="🎫",
+            custom_id="ticket_create_button"
         )
     
     async def callback(self, interaction: discord.Interaction):
@@ -205,7 +206,7 @@ class TicketControlView(View):
     def __init__(self):
         super().__init__(timeout=None)
     
-    @discord.ui.button(label="Принять", style=discord.ButtonStyle.primary, emoji="✋")
+    @discord.ui.button(label="Принять", style=discord.ButtonStyle.primary, emoji="✋", custom_id="ticket_claim_button")
     async def claim_button(self, interaction: discord.Interaction, button: Button):
         tickets = load_tickets()
         guild_id = str(interaction.guild.id)
@@ -237,7 +238,7 @@ class TicketControlView(View):
         await interaction.channel.send(embed=embed)
         await interaction.response.send_message('✅ Вы приняли этот тикет.', ephemeral=True)
     
-    @discord.ui.button(label="Закрыть", style=discord.ButtonStyle.danger, emoji="🔒")
+    @discord.ui.button(label="Закрыть", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="ticket_close_button")
     async def close_button(self, interaction: discord.Interaction, button: Button):
         modal = CloseTicketModal()
         await interaction.response.send_modal(modal)
